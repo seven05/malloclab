@@ -68,23 +68,29 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char*)(bp) + GET_SIZE(((char*)(bp) - WSIZE))) // 그 다음 블록의 bp 위치로 이동한다.(bp에서 해당 블록의 크기만큼 이동 -> 그 다음 블록의 헤더 뒤로 감.)
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp) - DSIZE))) // 그 전 블록의 bp위치로 이동.(이전 블록 footer로 이동하면 그 전 블록의 사이즈를 알 수 있으니 그만큼 그 전으로 이동.)
 
+// Explicit를 위한 매크로
+#define PREV_FREE_POINTER(bp) (*(void **)(bp))
+#define NEXT_FREE_POINTER(bp) (*(void **)(bp+WSIZE))
+
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
 static void *find_fit(size_t asize);  
 static void place(void *bp, size_t asize);  
 static char *heap_listp;
-// static char *last_bp = NULL; // next_fit을 위한 부분
+static char *last_bp; // explicit 버전
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
-    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)  // 초기의 빈 heap 할당(mem_sbrk)  
+    if ((heap_listp = mem_sbrk(6*WSIZE)) == (void *)-1)  // 초기의 빈 heap 할당(mem_sbrk)  
         return -1;  
     PUT(heap_listp, 0); // Alignment padding 생성
     PUT(heap_listp + (1*WSIZE), PACK(DSIZE,1)); // prologue header 생성
-    PUT(heap_listp + (2*WSIZE), PACK(DSIZE,1)); // prologue footer 생성
-    PUT(heap_listp + (3*WSIZE), PACK(0,1)); // epilogue block header 생성
+    PUT(heap_listp + (2*WSIZE), NULL); // prev
+    PUT(heap_listp + (3*WSIZE), NULL); // next
+    PUT(heap_listp + (4*WSIZE), PACK(DSIZE,1)); // prologue footer 생성
+    PUT(heap_listp + (5*WSIZE), PACK(0,1)); // epilogue block header 생성
     heap_listp += (2*WSIZE); // prologue header와 footer 사이로 포인터를 옮김.
 
     // 빈 Heap을 CHUNKSIZE byte로 확장하고, 초기 가용 블록을 생성해줌 
@@ -106,6 +112,7 @@ static void *extend_heap(size_t words){
     return coalesce(bp); // prev_block이 free상태라면 병합
 }
 
+// explicit버전 (LIFO)
 static void *coalesce(void *bp){
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // 이전 블록이 할당되었는지 확인 : bp의 포인터를 통해 이전 블록을 찾고, 이 이전블록의 footer를 통해 할당 여부를 확인한다.
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp))); // 다음 블록이 할당되었는지 확인 : bp의 포인터를 통해 다음 블록을 찾고, 이 다음블록의 header를 통해 할당 여부를 확인한다.
@@ -113,16 +120,40 @@ static void *coalesce(void *bp){
 
     //case1 앞뒤 모두 할당
     if (prev_alloc && next_alloc){
+        // 합쳐진 블록의 next prev 수정
+        PUT(bp+WSIZE,NEXT_FREE_POINTER(heap_listp)); // 원래있던 루트의 next값을 나의 next값으로
+        PUT(bp,NULL);   // 내 prev 값은 NULL 
+        PUT(NEXT_FREE_POINTER(heap_listp),bp); // 다음 가용리스트 prev값을 현재 bp를 가르키도록함
+        PUT(heap_listp + (3*WSIZE), bp);    // 루트의 next값을 현재bp로
         return bp;
     }
     //case2 앞만 할당
     else if (prev_alloc && !next_alloc){
+        // 다음 블록 next prev 처리
+        PUT(NEXT_FREE_POINTER(NEXT_BLKP(bp)),PREV_FREE_POINTER(NEXT_BLKP(bp))); //다음블록의 next블록의 prev에 다음블록의 prev값을넣어줌
+        PUT(PREV_FREE_POINTER(NEXT_BLKP(bp)),NEXT_FREE_POINTER(NEXT_BLKP(bp))); //다음블록의 prev블록의 next값을 다음블록의 next값으로 바꿔줌
+        PUT(NEXT_BLKP(bp),0); // 다음 블록의 prev 값 삭제
+        PUT(NEXT_BLKP(bp)+WSIZE,0); //  next값 삭제
+        // 합쳐진 블록의 next prev 수정
+        PUT(bp+WSIZE,NEXT_FREE_POINTER(heap_listp)); // 루트의 next (다음 free블록) -> 나의 next
+        PUT(NEXT_FREE_POINTER(heap_listp),bp);  // 다음 free 블록의 prev -> 나로
+        PUT(heap_listp + (3*WSIZE), bp);    // 루트의 next가 나를 가르키도록
+        // implicit때 쓰던 H,F 크기 수정
         size += GET_SIZE(HDRP(NEXT_BLKP(bp))); // 다음 블록의 크기를 현재 size에 더해줘요.
         PUT(HDRP(bp), PACK(size, 0)); // header 갱신 (더 큰 크기로 PUT)
         PUT(FTRP(bp), PACK(size,0)); // footer 갱신
     }
     //case3 뒤만 할당
     else if (!prev_alloc && next_alloc){
+        // 이전 블록 next prev 처리
+        PUT(NEXT_FREE_POINTER(PREV_BLKP(bp)),PREV_FREE_POINTER(PREV_BLKP(bp))); //이전블록의 next블록의 prev에 다음블록의 prev값을넣어줌
+        PUT(PREV_FREE_POINTER(PREV_BLKP(bp)),NEXT_FREE_POINTER(PREV_BLKP(bp))); //이전블록의 prev블록의 next값을 다음블록의 next값으로 바꿔줌
+        PUT(NEXT_BLKP(bp)+WSIZE,NULL); // 내 prev값은 NULL
+        // 합쳐진 블록의 next prev 수정
+        PUT(PREV_BLKP(bp)+WSIZE,NEXT_FREE_POINTER(heap_listp)); // 루트의 next (다음 free블록) -> 나의 next
+        PUT(NEXT_FREE_POINTER(heap_listp),PREV_BLKP(bp)); // 다음 free 블록의 prev -> 나로
+        PUT(heap_listp + (3*WSIZE), PREV_BLKP(bp)); // 루트의 next가 나를 가르키도록
+        // implicit때 쓰던 H,F 크기 수정
         size += GET_SIZE(HDRP(PREV_BLKP(bp))); // 이전 블록의 크기를 현재 size에 더해줘요.
         PUT(FTRP(bp), PACK(size,0)); // 현재 위치의 footer에 block size를 갱신해줌
         PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
@@ -130,6 +161,20 @@ static void *coalesce(void *bp){
     }
     //case4 앞뒤 모두 가용상태
     else{
+        // 다음블록 처리
+        PUT(NEXT_FREE_POINTER(NEXT_BLKP(bp)),PREV_FREE_POINTER(NEXT_BLKP(bp))); //다음블록의 next블록의 prev에 다음블록의 prev값을넣어줌
+        PUT(PREV_FREE_POINTER(NEXT_BLKP(bp)),NEXT_FREE_POINTER(NEXT_BLKP(bp))); //다음블록의 prev블록의 next값을 다음블록의 next값으로 바꿔줌
+        PUT(NEXT_BLKP(bp),0); // 다음 블록의 prev 값 삭제
+        PUT(NEXT_BLKP(bp)+WSIZE,0); //  next값 삭제
+        // 이전블록 처리
+        PUT(NEXT_FREE_POINTER(PREV_BLKP(bp)),PREV_FREE_POINTER(PREV_BLKP(bp))); //이전블록의 next블록의 prev에 다음블록의 prev값을넣어줌
+        PUT(PREV_FREE_POINTER(PREV_BLKP(bp)),NEXT_FREE_POINTER(PREV_BLKP(bp))); //이전블록의 prev블록의 next값을 다음블록의 next값으로 바꿔줌
+        PUT(NEXT_BLKP(bp)+WSIZE,NULL); // 내 prev값은 NULL
+        // 합쳐진 free 블록의 next prev 수정
+        PUT(PREV_BLKP(bp)+WSIZE,NEXT_FREE_POINTER(heap_listp)); // 루트의 next (다음 free블록) -> 나의 next
+        PUT(NEXT_FREE_POINTER(heap_listp),PREV_BLKP(bp)); // 다음 free 블록의 prev -> 나로
+        PUT(heap_listp + (3*WSIZE), PREV_BLKP(bp)); // 루트의 next가 나를 가르키도록
+        // implicit때 쓰던 H,F 크기 수정
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp))); // 이전 블록 및 다음 블록의 크기를 현재 size에 더해줘요.
         PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
