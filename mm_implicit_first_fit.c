@@ -73,7 +73,6 @@ static void *extend_heap(size_t words);
 static void *find_fit(size_t asize);  
 static void place(void *bp, size_t asize);  
 static char *heap_listp;
-// static char *last_bp = NULL; // next_fit을 위한 부분
 /* 
  * mm_init - initialize the malloc package.
  */
@@ -135,7 +134,6 @@ static void *coalesce(void *bp){
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
         bp = PREV_BLKP(bp);
     }
-    // last_bp = bp; // next_fit을 위해 필요한 부분
     return bp;
 }
 /* 
@@ -181,22 +179,18 @@ void *mm_malloc(size_t size)
     return bp;
 }
 
-// best_fit으로 구현한 방법(할당할수있는 공간중에 가장 작은사이즈의 공간을 찾아서 할당)
+// 이 방식은 first fit 방식 (가용블록 리스트를 처음부터 검색해서 크기가 맞는 첫번째 가용 블록을 선택)
 static void *find_fit(size_t asize){
-    char *bp = NULL;
-    char *best_bp = NULL;
-    size_t best_size = (size_t) -1; // size_t는 unsigned 타입이라 최대값으로 변함
+    void *bp;
+    // 힙의 시작 위치부터 순차적으로 모든 블록 탐색
+    // 크기가 0 이상(유효블럭), 다음블록으로
     for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
         // 헤더가 가용상태가 아니면서 사이즈를 만족해야 가용 가능
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
-            size_t diff_size = GET_SIZE(HDRP(bp)) - asize;
-            if(diff_size < best_size){
-                best_size = diff_size;
-                best_bp = bp;
-            }
+            return bp;
         }
     }
-    return best_bp;
+    return NULL;
 }
 
 static void place(void *bp, size_t asize)
