@@ -142,14 +142,6 @@ static void *coalesce(void *bp){
  */
 void *mm_malloc(size_t size)
 {
-    // int newsize = ALIGN(size + SIZE_T_SIZE);
-    // void *p = mem_sbrk(newsize);
-    // if (p == (void *)-1)
-	// return NULL;
-    // else {
-    //     *(size_t *)p = size;
-    //     return (void *)((char *)p + SIZE_T_SIZE);
-    // }
     size_t asize; // block 사이즈 조정
     size_t extendsize; // heap에 맞는 fit이 없으면 확장하기 위한 사이즈
     char *bp;
@@ -225,19 +217,6 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    // void *oldptr = ptr;
-    // void *newptr;
-    // size_t copySize;
-    
-    // newptr = mm_malloc(size);
-    // if (newptr == NULL)
-    //   return NULL;
-    // copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    // if (size < copySize)
-    //   copySize = size;
-    // memcpy(newptr, oldptr, copySize);
-    // mm_free(oldptr);
-    // return newptr;
     if(size <= 0){  // 사용하는 메모리가 0이거나 음수면 메모리해제
         mm_free(ptr);
         return 0;
